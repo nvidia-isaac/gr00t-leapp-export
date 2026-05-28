@@ -12,6 +12,8 @@ Replaces PIL-based operations in:
 import torch
 import torch.nn.functional as F
 from torch import Tensor
+from torchvision.transforms import InterpolationMode
+from torchvision.transforms.v2.functional import resize as tv_resize
 from typing import Tuple
 
 # Constants from Eagle processor
@@ -101,13 +103,21 @@ def resize_image_torch(
         image = image.unsqueeze(0)
         squeeze_batch = True
     
-    # Interpolate
-    if mode in ('bilinear', 'bicubic'):
-        resized = F.interpolate(
+    # Interpolate.
+    # For bilinear/bicubic we prefer torchvision v2's resize because its
+    # antialiased kernels are closer to PIL.Image.resize than F.interpolate.
+    if mode == 'bicubic':
+        resized = tv_resize(
             image.float(),
-            size=(target_height, target_width),
-            mode=mode,
-            align_corners=align_corners,
+            size=[target_height, target_width],
+            interpolation=InterpolationMode.BICUBIC,
+            antialias=True,
+        )
+    elif mode == 'bilinear':
+        resized = tv_resize(
+            image.float(),
+            size=[target_height, target_width],
+            interpolation=InterpolationMode.BILINEAR,
             antialias=True,
         )
     else:
@@ -227,12 +237,11 @@ class EagleImagePreprocessor(torch.nn.Module):
             image = image.unsqueeze(0)
             squeeze_batch = True
         
-        # Resize with bicubic interpolation
-        image = F.interpolate(
+        # Resize with bicubic interpolation (torchvision v2 PIL-compatible kernel)
+        image = tv_resize(
             image.float(),
-            size=(self.target_height, self.target_width),
-            mode='bicubic',
-            align_corners=False,
+            size=[self.target_height, self.target_width],
+            interpolation=InterpolationMode.BICUBIC,
             antialias=True,
         )
         

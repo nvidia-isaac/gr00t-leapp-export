@@ -15,6 +15,8 @@ import torch
 import torch.nn.functional as F
 from PIL import Image
 from torch import Tensor
+from torchvision.transforms import InterpolationMode
+from torchvision.transforms.v2.functional import resize as tv_resize
 from typing import Any, Dict, List, Literal
 from transformers import BatchFeature
 
@@ -102,11 +104,12 @@ class Gr00tN1d6DataCollatorTorch:
             max_pixels=image_processor.size["longest_edge"],
         )
 
-        image = F.interpolate(
+        # Use torchvision v2 resize with PIL-compatible bicubic kernel
+        # (closer to HF Qwen3-VL processor's PIL.Image.resize than F.interpolate).
+        image = tv_resize(
             image.unsqueeze(0).float(),
-            size=(resized_height, resized_width),
-            mode="bicubic",
-            align_corners=False,
+            size=[resized_height, resized_width],
+            interpolation=InterpolationMode.BICUBIC,
             antialias=True,
         ).squeeze(0)
         image = image * image_processor.rescale_factor

@@ -12,6 +12,8 @@ import re
 import torch
 import torch.nn.functional as F
 from torch import Tensor
+from torchvision.transforms import InterpolationMode
+from torchvision.transforms.v2.functional import resize as tv_resize
 from typing import Any, Dict, List
 
 
@@ -115,11 +117,12 @@ class Gr00tN1d6ProcessorTorch:
             new_h = int(h * max_size / w)
         
         image = image.unsqueeze(0).to(torch.float32)
+        # Use 'area' to match cv2.INTER_AREA used by the original albumentations
+        # eval pipeline (A.SmallestMaxSize(..., interpolation=cv2.INTER_AREA)).
         image = F.interpolate(
             image,
             size=(new_h, new_w),
-            mode='bilinear',  # Baseline configuration
-            align_corners=False,
+            mode='area',
         )
         image = image.round().clamp(0, 255)
         return image.squeeze(0)
@@ -171,16 +174,20 @@ class Gr00tN1d6ProcessorTorch:
             image = image.permute(2, 0, 1)
         
         if self.use_albumentations:
-            # Albumentations pipeline: SmallestMaxSize -> FractionalCenterCrop -> SmallestMaxSize
+            # Albumentations pipeline (matches eval_transform in image_augmentations.py):
+            #   LetterBoxPad -> SmallestMaxSize -> FractionalCenterCrop -> SmallestMaxSize
             max_size = self.shortest_image_edge
             crop_fraction = self.crop_fraction
-            
+
+            # Step 0: LetterBoxPad - pad non-square images to square with black bars
+            image = self.letterbox_transform(image)
+
             # Step 1: SmallestMaxSize
             image = self.smallest_max_size_resize(image, max_size)
-            
+
             # Step 2: FractionalCenterCrop
             image = self.fractional_center_crop(image, crop_fraction)
-            
+
             # Step 3: SmallestMaxSize again
             image = self.smallest_max_size_resize(image, max_size)
             
@@ -194,30 +201,30 @@ class Gr00tN1d6ProcessorTorch:
             image = image.unsqueeze(0).to(torch.float32)
             
             # Step 2: Resize to image_target_size
+            # Use torchvision v2 resize with PIL-compatible bicubic kernel
+            # (closer to original PIL resize than F.interpolate bicubic).
             target_h, target_w = self.image_target_size
-            image = F.interpolate(
+            image = tv_resize(
                 image,
-                size=(target_h, target_w),
-                mode='bicubic',
-                align_corners=False,
+                size=[target_h, target_w],
+                interpolation=InterpolationMode.BICUBIC,
                 antialias=True,
             )
             image = image.round().clamp(0, 255)
-            
+
             # Remove batch dim for center crop
             image = image.squeeze(0)
-            
+
             # Step 3: CenterCrop to image_crop_size
             crop_h, crop_w = self.image_crop_size
             image = self.center_crop(image, crop_h, crop_w)
-            
+
             # Step 4: Resize back to image_target_size
             image = image.unsqueeze(0)
-            image = F.interpolate(
+            image = tv_resize(
                 image,
-                size=(target_h, target_w),
-                mode='bicubic',
-                align_corners=False,
+                size=[target_h, target_w],
+                interpolation=InterpolationMode.BICUBIC,
                 antialias=True,
             )
             image = image.round().clamp(0, 255)
