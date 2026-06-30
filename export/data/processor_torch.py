@@ -166,7 +166,7 @@ class Gr00tN1d6ProcessorTorch:
             image: Input tensor (H, W, C) or (C, H, W) as uint8 [0, 255]
             
         Returns:
-            Processed tensor (C, H, W) as uint8 [0, 255]
+            Processed tensor (C, H, W) as float32 [0, 255]
         """
         # Ensure (C, H, W) format
         if image.ndim == 3 and image.shape[-1] == 3:
@@ -232,10 +232,7 @@ class Gr00tN1d6ProcessorTorch:
             # Remove batch dim
             image = image.squeeze(0)
         
-        # Convert to uint8
-        image = image.to(torch.uint8)
-        
-        return image
+        return image.to(torch.float32)
     
     def _get_vlm_inputs_torch(
         self,
@@ -251,12 +248,12 @@ class Gr00tN1d6ProcessorTorch:
         Args:
             image_keys: List of image view keys (e.g., ['left_camera', 'right_camera'])
             images: Dict mapping view keys to lists of image tensors
-                Each tensor is (H, W, C) or (C, H, W) as uint8
+                Each tensor is (H, W, C) or (C, H, W) as float32 [0, 255]
             language: Language instruction string
             
         Returns:
             Dict with:
-                - 'images': List of tensors (H, W, C) uint8 (matches PIL format)
+                - 'images': List of tensors (H, W, C) float32 [0, 255]
                 - 'conversation': Conversation structure with tensor images (H, W, C)
         """
         temporal_stacked_images = {}
@@ -275,7 +272,7 @@ class Gr00tN1d6ProcessorTorch:
         # Validate outputs
         for k, v in temporal_stacked_images.items():
             assert v.ndim == 4, f"{k} is not a 4D tensor, got shape {v.shape}"
-            assert v.dtype == torch.uint8, f"{k} is not uint8, got {v.dtype}"
+            assert torch.is_floating_point(v), f"{k} is not floating point, got {v.dtype}"
             assert v.shape[1] == 3, f"{k} does not have 3 channels, got {v.shape[1]}"
         
         # Stack across views and flatten: (T*V, C, H, W)
@@ -318,7 +315,7 @@ class Gr00tN1d6ProcessorTorch:
             
         Returns:
             Dict with:
-                - 'images': List of tensors (H, W, C) uint8 (matches PIL format)
+                - 'images': List of tensors (H, W, C) float32 [0, 255]
                 - 'conversation': Conversation structure with tensor images (H, W, C)
         """
         image_keys = self.modality_configs[embodiment_tag.value]["video"].modality_keys

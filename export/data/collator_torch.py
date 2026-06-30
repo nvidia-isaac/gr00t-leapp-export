@@ -35,7 +35,7 @@ class Gr00tN1d6DataCollatorTorch:
     PyTorch-traceable data collator for GR00T N1D6.
     
     Full replacement for Gr00tN1d6DataCollator that:
-    1. Takes images as torch tensors (H, W, C) uint8
+    1. Takes images as torch tensors (H, W, C) float32 [0, 255]
     2. Processes images using pure PyTorch operations
     3. Gets tokenization from the underlying VLM processor
     4. Returns same BatchFeature format as original
@@ -126,19 +126,25 @@ class Gr00tN1d6DataCollatorTorch:
         grid_t = patches.shape[0] // temporal_patch_size
         grid_h = resized_height // patch_size
         grid_w = resized_width // patch_size
-        patches = patches.reshape(
-            grid_t,
-            temporal_patch_size,
-            channel,
-            grid_h // merge_size,
-            merge_size,
-            patch_size,
-            grid_w // merge_size,
-            merge_size,
-            patch_size,
+
+        # Qwen3-VL orders patches by merged spatial groups:
+        # (t, h//merge, w//merge, h%merge, w%merge). Use unfold to avoid
+        # the original rank-9 reshape, which TensorRT cannot parse.
+        patches = patches.reshape(grid_t, temporal_patch_size, channel, resized_height, resized_width)
+        patches = patches.permute(0, 2, 1, 3, 4).reshape(
+            grid_t, channel * temporal_patch_size, resized_height, resized_width
         )
-        patches = patches.permute(0, 3, 6, 4, 7, 2, 1, 5, 8)
-        flatten_patches = patches.reshape(
+        flatten_patches = F.unfold(patches, kernel_size=patch_size, stride=patch_size).transpose(1, 2)
+
+        spatial_order = [
+            (h_outer * merge_size + h_inner) * grid_w + (w_outer * merge_size + w_inner)
+            for h_outer in range(grid_h // merge_size)
+            for w_outer in range(grid_w // merge_size)
+            for h_inner in range(merge_size)
+            for w_inner in range(merge_size)
+        ]
+        spatial_order = torch.tensor(spatial_order, dtype=torch.long, device=flatten_patches.device)
+        flatten_patches = flatten_patches.index_select(1, spatial_order).reshape(
             grid_t * grid_h * grid_w,
             channel * temporal_patch_size * patch_size * patch_size,
         )
@@ -160,7 +166,7 @@ class Gr00tN1d6DataCollatorTorch:
         Args:
             features: List of processed inputs from processor.
                 Each contains: vlm_content, state, embodiment_id, etc.
-                Images in vlm_content should be torch tensors (H, W, C) uint8.
+                Images in vlm_content should be torch tensors (H, W, C) float32 [0, 255].
                 
         Returns:
             BatchFeature with:
