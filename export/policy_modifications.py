@@ -34,6 +34,10 @@ def _backbone_forward_with_int32(self, vl_input):
     
     Calls self._original_forward which is the original forward method.
     """
+    if "image_grid_thw" not in vl_input and hasattr(self, "_fixed_image_grid_thw"):
+        vl_input = dict(vl_input)
+        vl_input["image_grid_thw"] = self._fixed_image_grid_thw.to(vl_input["pixel_values"].device)
+
     outputs = self._original_forward(vl_input)
     # Convert boolean tensors to int32
     converted_outputs = {}
@@ -64,6 +68,12 @@ def _action_head_get_action_with_bool(self, backbone_outputs, action_inputs, opt
         options=options,
         initial_noise=initial_noise,
     )
+
+
+def _action_head_prepare_input_for_export(self, batch):
+    """Keep only inference-time action-head inputs at the LEAPP graph boundary."""
+    keys_to_use = ("state", "embodiment_id")
+    return self._original_prepare_input({k: batch[k] for k in keys_to_use if k in batch})
 
 
 def get_action_traceable(self, data, initial_noise=None):
@@ -127,11 +137,14 @@ def get_action_traceable(self, data, initial_noise=None):
     collated_inputs = self.collate_fn(processed_inputs)
     collated_inputs = _rec_to_dtype(collated_inputs, dtype=torch.float32)
     
+    # Keep image_grid_thw internal to the backbone export so fixed deployments
+    # do not expose it as a runtime pipeline value.
+    self.model.backbone._fixed_image_grid_thw = collated_inputs['inputs'].pop('image_grid_thw')
+
     # Annotate outputs for export
     static_outputs = {
         'input_ids': collated_inputs['inputs']['input_ids'],
         'attention_mask': collated_inputs['inputs']['attention_mask'],
-        'image_grid_thw': collated_inputs['inputs']['image_grid_thw'],
         'embodiment_id': collated_inputs['inputs']['embodiment_id']
     }
     annotate.output_tensors(
@@ -261,6 +274,9 @@ def make_modifications(policy):
     # Store original get_action and replace with bool conversion wrapper
     policy.model.action_head._original_get_action = policy.model.action_head.get_action
     policy.model.action_head.get_action = types.MethodType(_action_head_get_action_with_bool, policy.model.action_head)
+
+    policy.model.action_head._original_prepare_input = policy.model.action_head.prepare_input
+    policy.model.action_head.prepare_input = types.MethodType(_action_head_prepare_input_for_export, policy.model.action_head)
 
     # ==================== Preprocessing modifications ====================
     # Replace state/action processor with torch-traceable version
