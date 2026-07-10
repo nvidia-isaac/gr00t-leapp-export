@@ -75,6 +75,39 @@ def get_modified_vision_model(vision_model):
     return vision_model.eval()
 
 
+def freeze_vision_pos_embeds(vision_model, grid_thw):
+    """Pre-compute ``fast_pos_embed_interpolate`` and ``rot_pos_emb`` for a fixed
+    ``grid_thw`` and replace those methods with constant-returning closures.
+
+    Why: ``Qwen3VLVisionEncoder.fast_pos_embed_interpolate`` builds Gather indices
+    into the 2304-entry pos_embed table via Python loops over tensor values and
+    ``.tolist()`` calls. Tracing this is brittle — the resulting ONNX may leave
+    the Gather op wired to a runtime int64 input, which causes Triton instance
+    creation to read uninitialized device memory and fail with
+    ``indices element out of data bounds``. ``rot_pos_emb`` has the same kind of
+    grid-thw-dependent shape build-up. Freezing both removes that risk for a
+    shape-fixed export.
+
+    Mirrors the precomputation done in
+    ``scripts/deployment/export_onnx_n1d7.py::Qwen3VisionForExport.__init__``.
+    """
+    with torch.no_grad():
+        frozen_pos = vision_model.fast_pos_embed_interpolate(grid_thw).detach().clone()
+        frozen_rot = vision_model.rot_pos_emb(grid_thw).detach().clone()
+
+    def _frozen_pos_embed_interpolate(self, grid_thw):
+        return frozen_pos.to(device=grid_thw.device, dtype=frozen_pos.dtype)
+
+    def _frozen_rot_pos_emb(self, grid_thw):
+        return frozen_rot.to(device=grid_thw.device, dtype=frozen_rot.dtype)
+
+    vision_model.fast_pos_embed_interpolate = types.MethodType(
+        _frozen_pos_embed_interpolate, vision_model
+    )
+    vision_model.rot_pos_emb = types.MethodType(_frozen_rot_pos_emb, vision_model)
+    return vision_model
+
+
 def _deepstack_process_onnx(self, hidden_states, visual_pos_masks, visual_embeds):
     """ONNX-friendly replacement for boolean indexed in-place assignment."""
     visual_pos_masks = visual_pos_masks.to(hidden_states.device)

@@ -11,7 +11,11 @@ to use PyTorch-traceable operations for ONNX export.
 import torch
 import types
 
-from data.nn_modifications import get_modified_vision_model, get_modified_language_model
+from data.nn_modifications import (
+    get_modified_vision_model,
+    get_modified_language_model,
+    freeze_vision_pos_embeds,
+)
 from data.state_action_processor_torch import StateActionProcessorTorch
 from data.processor_torch import create_torch_processor
 from data.collator_torch import create_torch_collator
@@ -225,19 +229,56 @@ def get_action_traceable(self, data, initial_noise=None):
     return casted_action, {}
 
 
-def make_modifications(policy):
+def _capture_image_grid_thw(policy, sample_data):
+    """Run the preprocess pipeline on ``sample_data`` to extract ``image_grid_thw``.
+
+    Must be called after the policy's torch processor / collator have been swapped
+    in by ``make_modifications``, so the captured ``grid_thw`` matches what the
+    traced graph will see.
+    """
+    unbatched_observations = policy._unbatch_observation(sample_data)
+    for i in range(len(unbatched_observations)):
+        for k, v in unbatched_observations[i]["state"].items():
+            unbatched_observations[i]["state"][k] = torch.from_numpy(v)
+        for k, v in unbatched_observations[i]["video"].items():
+            unbatched_observations[i]["video"][k] = torch.from_numpy(v).to(torch.float32)
+
+    processed_inputs = []
+    for obs in unbatched_observations:
+        vla_step_data = policy._to_vla_step_data(obs)
+        messages = [{"type": MessageType.EPISODE_STEP.value, "content": vla_step_data}]
+        processed_input = policy.processor(messages)
+        torch_result = policy.torch_processor.process_vlm_inputs_torch(
+            vla_step_data, policy.embodiment_tag
+        )
+        processed_input["vlm_content"]["images"] = torch_result["images"]
+        processed_input["vlm_content"]["conversation"] = torch_result["conversation"]
+        processed_inputs.append(processed_input)
+
+    collated = policy.collate_fn(processed_inputs)
+    return collated["inputs"]["image_grid_thw"]
+
+
+def make_modifications(policy, sample_data=None):
     """
     Apply all modifications to make the policy torch-traceable for export.
-    
+
     This modifies the policy in-place to:
     1. Replace vision/language models with export-compatible versions
     2. Replace state/action processor with torch-traceable version
     3. Replace collator with torch-traceable version
     4. Replace get_action method with traceable version
-    
+    5. (Optional) Freeze vision pos_embed / rot_pos_emb for the trace ``grid_thw``
+
     Args:
         policy: Gr00tPolicy instance to modify
-        
+        sample_data: Trace-time input (the same ``data`` passed to
+            ``get_action_traceable``). When provided, ``fast_pos_embed_interpolate``
+            and ``rot_pos_emb`` are pre-evaluated for the captured ``grid_thw`` and
+            replaced with constant-returning closures. This avoids dynamic Gather
+            ops over the 2304-entry pos_embed table that otherwise cause Triton
+            ORT instance creation to fail with garbage indices.
+
     Returns:
         Modified policy
     """
@@ -296,6 +337,12 @@ def make_modifications(policy):
 
     # ==================== Replace get_action method ====================
     policy.get_action = types.MethodType(get_action_traceable, policy)
+
+    # ==================== Freeze vision pos/rot embeds for trace grid_thw ====
+    if sample_data is not None:
+        grid_thw = _capture_image_grid_thw(policy, sample_data)
+        visual = qwen_model.model.visual if hasattr(qwen_model, "model") and hasattr(qwen_model.model, "visual") else qwen_model.vision_model
+        freeze_vision_pos_embeds(visual, grid_thw)
 
     return policy
 

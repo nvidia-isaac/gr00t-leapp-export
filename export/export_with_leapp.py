@@ -87,8 +87,11 @@ def export_gr00t_with_leapp(policy, data, output_name='exported_gr00t'):
         data: Sample input data for tracing
         output_name: Name for the exported model
     """
-    # Apply modifications to make policy traceable
-    policy = make_modifications(policy)
+    # Apply modifications to make policy traceable.
+    # Pass `data` so make_modifications can freeze vision pos/rot embeds for the
+    # trace-time grid_thw — avoids the dynamic 2304-entry pos_embed Gather that
+    # breaks Triton instance creation on some exports.
+    policy = make_modifications(policy, sample_data=data)
 
     # Configure backbone export
     policy.model.backbone.forward = annotate._method(
