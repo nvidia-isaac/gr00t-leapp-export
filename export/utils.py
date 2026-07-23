@@ -26,15 +26,15 @@ def set_all_seeds(seed=42):
 def compare_tensors(tensor1, tensor2, name1="Tensor1", name2="Tensor2", rtol=1e-2, atol=1e-3):
     """
     Compare two PyTorch tensors and print statistical analysis.
-    
+
     Args:
         tensor1: First PyTorch tensor
-        tensor2: Second PyTorch tensor  
+        tensor2: Second PyTorch tensor
         name1: Label for first tensor
         name2: Label for second tensor
         rtol: Relative tolerance for validation
         atol: Absolute tolerance for validation
-    
+
     Returns:
         bool: True if tensors are close within tolerance
     """
@@ -42,7 +42,7 @@ def compare_tensors(tensor1, tensor2, name1="Tensor1", name2="Tensor2", rtol=1e-
     device = tensor1.device
     t1 = tensor1.detach().float()
     t2 = tensor2.detach().float().to(device)
-    
+
     # Compute errors
     errors = torch.abs(t1 - t2)
     max_diff = errors.max().item()
@@ -89,7 +89,7 @@ def compare_tensors(tensor1, tensor2, name1="Tensor1", name2="Tensor2", rtol=1e-
         worst_idx.insert(0, temp % dim)
         temp //= dim
     worst_idx = tuple(worst_idx)
-    
+
     print(f"\n  Worst error location: index {worst_idx}")
     print(f"    {name1} value: {t1[worst_idx].item():.6f}")
     print(f"    {name2} value: {t2[worst_idx].item():.6f}")
@@ -115,7 +115,7 @@ def get_policy_and_dataset(
     embodiment_tag="OXE_DROID_RELATIVE_EEF_RELATIVE_JOINT",
     video_backend="torchcodec",
 ):
-    
+
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
 
@@ -160,16 +160,16 @@ def get_preprocessed(observation, policy):
 def get_gr00t_action_head_input(observation, policy):
     backbone_inputs, action_inputs = policy.model.prepare_input(observation)
     backbone_outputs = policy.model.backbone(backbone_inputs)
-    
+
     return backbone_outputs, action_inputs
 
 def get_gr00t_input(dataset, policy, step_index = None, step = None):
     modality_config = policy.get_modality_config()
     embodiment_tag = policy.embodiment_tag  # Get from policy directly
-    
+
     if step_index is None:
         step_index = random.randint(0, len(dataset) - 1)
-    
+
     episode_data = dataset[0]
     step_data = extract_step_data(
         episode_data, step_index=step_index, modality_configs=modality_config, embodiment_tag=embodiment_tag, allow_padding=False

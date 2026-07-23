@@ -10,6 +10,7 @@ tracing and export framework.
 
 from utils import get_policy_and_dataset, get_gr00t_input
 from policy_modifications import make_modifications, get_action_traceable
+from cuda_capturable import make_cuda_capturable
 from joint_name_parser import EMBODIMENT_JOINT_REGISTRY, register_embodiment_joints
 import os
 import json
@@ -28,6 +29,10 @@ args.add_argument("--output_name", type=str, default='exported_gr00t')
 args.add_argument("--joint_config", type=str, default=None,
                   help="Path to a JSON file with joint names: {state: {group: [names]}, action: {group: [names]}}. "
                        "Auto-detected from dataset modality.json if not provided.")
+args.add_argument("--cuda-capturable", dest="cuda_capturable", action="store_true",
+                  help="Post-process the exported backbone.onnx into a CUDA-graph-capturable form by "
+                       "baking its data-dependent NonZero (masked_scatter) outputs in as constants. "
+                       "Requires a fixed-prompt export (prompt baked into preprocess_video).")
 args = args.parse_args()
 
 
@@ -78,14 +83,16 @@ def _split_leapp_output_path(output_name: str) -> tuple[str, str]:
     return save_path or ".", graph_name
 
 
-def export_gr00t_with_leapp(policy, data, output_name='exported_gr00t'):
+def export_gr00t_with_leapp(policy, data, output_name='exported_gr00t', cuda_capturable=False):
     """
     Export GR00T policy using leapp framework.
-    
+
     Args:
         policy: Gr00tPolicy instance (will be modified in-place)
         data: Sample input data for tracing
         output_name: Name for the exported model
+        cuda_capturable: If True, rewrite the exported backbone.onnx into a
+            CUDA-graph-capturable form (bakes its NonZero outputs in as constants).
     """
     # Apply modifications to make policy traceable
     policy = make_modifications(policy)
@@ -108,10 +115,13 @@ def export_gr00t_with_leapp(policy, data, output_name='exported_gr00t'):
     leapp.start(graph_name, save_path=save_path, global_patching=False, dry_run=False)
     get_action_traceable(policy, data)
     leapp.stop()
-    
+
     # Compile and export
     leapp.compile_graph(validate=False) # validate with comparison script
-    
+
+    if cuda_capturable:
+        make_cuda_capturable(os.path.join(save_path, graph_name))
+
     print(f"Export completed: {os.path.join(save_path, graph_name)}")
 
 
@@ -121,13 +131,14 @@ def main():
 
     # Load policy and dataset
     policy, dataset = get_policy_and_dataset(model_path = args.model_path,
-                                            dataset_path = args.dataset_path, 
+                                            dataset_path = args.dataset_path,
                                             embodiment_tag = args.embodiment_tag, video_backend = args.video_backend)
-                        
+
     # Get sample input data
     data = get_gr00t_input(dataset, policy, step_index=0, step=None)
     # Export
-    export_gr00t_with_leapp(policy, data, output_name=args.output_name)
+    export_gr00t_with_leapp(policy, data, output_name=args.output_name,
+                            cuda_capturable=args.cuda_capturable)
 
 
 if __name__ == "__main__":
