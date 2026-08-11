@@ -64,6 +64,7 @@ dependencies = [
     "triton==3.3.1; sys_platform == 'linux' and platform_machine == 'aarch64'",
     "flash-attn==2.7.4.post1; platform_machine == 'x86_64'",
     "onnx>=1.20.0",
+    "onnxruntime>=1.20.0",
     # cu12 wheels only exist for x86_64; Blackwell / aarch64 requires cu13.
     "tensorrt-cu12>=10.15.1.29; platform_machine == 'x86_64'",
     "tensorrt-cu13>=10.15.1.29; platform_machine == 'aarch64'",
