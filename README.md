@@ -88,6 +88,29 @@ uv run python export/export_with_leapp.py \
     --output_name exported_gr00t
 ```
 
+Choose the G1 joint configuration for the checkpoint's training profile:
+
+| Training profile | Joint configuration |
+| --- | --- |
+| Physical G1 reference workflow | [`export/data/g1_joints.json`](export/data/g1_joints.json) |
+| Arena static-apple simulation policy used by Isaac OS | [`export/data/g1_sim_joints.json`](export/data/g1_sim_joints.json) |
+
+The simulation file matches the active groups in
+[`nvidia/GN1x-Tuned-Arena-G1-Static-PickNPlace`](https://huggingface.co/nvidia/GN1x-Tuned-Arena-G1-Static-PickNPlace)
+and the joint names in its
+[training dataset](https://huggingface.co/datasets/nvidia/Arena-G1-Static-PickNPlace-Task).
+Its hand-state order is index, middle, thumb; the physical configuration uses a
+different hand-state order. Both use index, middle, thumb for hand actions.
+These files describe training profiles, not all simulated or physical G1 policies.
+For other data, supply a configuration matching its state and action ordering.
+The joint JSON is needed for export, not by the Isaac OS app at runtime.
+
+For the Arena-based simulation profile, pass:
+
+```bash
+--joint_config export/data/g1_sim_joints.json
+```
+
 Validate an export by comparing the original PyTorch policy against the exported policy:
 
 ```bash
